@@ -7,6 +7,6 @@
   },
   "dependencies": {
     "mqtt": "^5.3.4",
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "^2.43.0"
   }
 }
