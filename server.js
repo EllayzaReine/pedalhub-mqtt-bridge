@@ -23,7 +23,7 @@ client.on('message', async (topic, message) => {
     const lat = data.lat;
     const lon = data.lon;
     const spd = data.spd;
-    const bikeId = 1;
+    const bikeId = data.bike_id;
 
     // Save to bike_locations table
     const { error: locError } = await supabase
