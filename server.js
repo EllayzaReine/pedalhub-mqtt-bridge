@@ -4,7 +4,7 @@ const http = require('http');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const MQTT_TOPIC = 'pedalhub/bike/1/location';
+const MQTT_TOPIC = 'pedalhub/bike/12/location';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
