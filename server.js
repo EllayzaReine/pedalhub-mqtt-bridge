@@ -1,71 +1,138 @@
 const mqtt = require('mqtt');
-const { createClient } = require('@supabase/supabase-js');
+const https = require('https');
 const http = require('http');
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_HOST = 'lnbdudfuqemarczocjcm.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const MQTT_TOPIC = 'pedalhub/bike/+/location'; // wildcard para sa multiple bikes
-const PORT = process.env.PORT || 3000;
+const MQTT_TOPIC = 'pedalhub/bike/12/location';
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+async function saveToSupabase(bikeId, lat, lon, spd) {
+  const body = JSON.stringify({
+    bike_id: bikeId,
+    latitude: lat,
+    longitude: lon,
+    speed: spd
+  });
 
-// ✅ HTTP server para hindi mapatay ng Railway
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'MQTT bridge running', uptime: process.uptime() }));
-});
-server.listen(PORT, () => console.log(`HTTP alive on port ${PORT}`));
+  return new Promise((resolve) => {
+    const options = {
+      hostname: SUPABASE_HOST,
+      port: 443,
+      path: '/rest/v1/bike_locations',
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Prefer': 'return=minimal'
+      }
+    };
 
-// MQTT setup
-const client = mqtt.connect('mqtt://broker.hivemq.com:1883', {
-  clientId: 'pedalhub-bridge-' + Math.random().toString(16).slice(2, 8),
-  clean: true,
-  connectTimeout: 10000,
-  reconnectPeriod: 5000,  // auto-reconnect every 5s
-});
+    const req = https.request(options, (res) => {
+      console.log('Location saved! Status:', res.statusCode);
+      resolve(true);
+    });
 
-client.on('connect', () => {
-  console.log('✅ Connected to HiveMQ');
-  client.subscribe(MQTT_TOPIC, { qos: 0 }, (err) => {
-    if (!err) console.log('📡 Subscribed to: ' + MQTT_TOPIC);
+    req.on('error', (e) => {
+      console.error('Save error:', e.message);
+      resolve(false);
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+async function updateBike(bikeId, lat, lon) {
+  const body = JSON.stringify({
+    latitude: lat,
+    longitude: lon,
+    last_location_update: new Date().toISOString()
+  });
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: SUPABASE_HOST,
+      port: 443,
+      path: '/rest/v1/bikes?id=eq.' + bikeId,
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Prefer': 'return=minimal'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      console.log('Bike updated! Status:', res.statusCode);
+      resolve(true);
+    });
+
+    req.on('error', (e) => {
+      console.error('Update error:', e.message);
+      resolve(false);
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+// MQTT subscriber
+const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
+
+mqttClient.on('connect', () => {
+  console.log('Connected to MQTT broker!');
+  mqttClient.subscribe(MQTT_TOPIC, (err) => {
+    if (!err) console.log('Subscribed to: ' + MQTT_TOPIC);
     else console.error('Subscribe error:', err);
   });
 });
 
-client.on('message', async (topic, message) => {
+mqttClient.on('message', async (topic, message) => {
   try {
-    const raw = message.toString().trim();
-    console.log('📥 Raw message:', raw);
-    const data = JSON.parse(raw);
-
-    const lat = parseFloat(data.lat);
-    const lon = parseFloat(data.lon);
-    const spd = parseFloat(data.spd);
-    const bikeId = parseInt(data.bike_id) || 1;
-
-    if (isNaN(lat) || isNaN(lon)) {
-      console.error('❌ Invalid coordinates');
-      return;
-    }
-
-    const [locResult, bikeResult] = await Promise.all([
-      supabase.from('bike_locations').insert({ bike_id: bikeId, latitude: lat, longitude: lon, speed: spd }),
-      supabase.from('bikes').update({ latitude: lat, longitude: lon, last_location_update: new Date().toISOString() }).eq('id', bikeId)
-    ]);
-
-    if (locResult.error) console.error('❌ Location insert:', locResult.error.message);
-    else console.log('✅ Location saved');
-
-    if (bikeResult.error) console.error('❌ Bike update:', bikeResult.error.message);
-    else console.log('✅ Bike updated');
-
+    const data = JSON.parse(message.toString());
+    console.log('MQTT Received:', data);
+    await saveToSupabase(data.bike_id, data.lat, data.lon, data.spd);
+    await updateBike(data.bike_id, data.lat, data.lon);
   } catch (e) {
-    console.error('❌ Parse error:', e.message, '| Raw:', message.toString());
+    console.error('MQTT parse error:', e.message);
   }
 });
 
-client.on('error', (err) => console.error('MQTT error:', err.message));
-client.on('offline', () => console.warn('⚠️ MQTT offline, reconnecting...'));
-client.on('reconnect', () => console.log('🔄 Reconnecting to MQTT...'));
+mqttClient.on('error', (err) => {
+  console.error('MQTT error:', err.message);
+});
 
-console.log('🚀 MQTT Bridge starting...');
+// HTTP server para sa SIM800L direct post
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'POST' && req.url === '/location') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body);
+        console.log('HTTP Received:', data);
+        await saveToSupabase(data.bike_id, data.lat, data.lon, data.spd);
+        await updateBike(data.bike_id, data.lat, data.lon);
+        res.writeHead(200);
+        res.end('ok');
+      } catch (e) {
+        console.error('HTTP error:', e.message);
+        res.writeHead(500);
+        res.end('error');
+      }
+    });
+  } else {
+    res.writeHead(200);
+    res.end('PedalHub GPS Bridge Running!');
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log('HTTP + MQTT Bridge running on port ' + PORT);
+});
