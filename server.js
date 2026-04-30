@@ -66,7 +66,7 @@ async function updateBike(bikeId, lat, lon) {
 }
 
 // ─────────────────────────────────────────────
-const mqttClient = mqtt.connect('mqtt://test.mosquitto.org:1883', {
+const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883', {
   clientId: 'railway-bridge-' + Math.random().toString(16).slice(2, 8),
   clean: true,
   connectTimeout: 10000,
