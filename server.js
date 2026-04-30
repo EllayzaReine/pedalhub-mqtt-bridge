@@ -48,12 +48,18 @@ function httpsPost(path, method, body) {
 }
 
 // ─────────────────────────────────────────────
-async function saveToSupabase(bikeId, lat, lon, spd) {
+async function saveToSupabase(bikeId, lat, lon, spd, sentAt, hasFix, fixSearchSec) {
+  const now = Date.now();
+  const delaySec = sentAt ? ((now - sentAt) / 1000).toFixed(2) : null;
   return httpsPost('/rest/v1/bike_locations', 'POST', {
     bike_id: bikeId,
     latitude: lat,
     longitude: lon,
-    speed: spd
+    speed: spd,
+    sent_at: sentAt ? new Date(sentAt).toISOString() : null,
+    delay_seconds: delaySec ? parseFloat(delaySec) : null,
+    has_fix: hasFix,
+    fix_search_sec: fixSearchSec
   });
 }
 
@@ -87,7 +93,13 @@ mqttClient.on('message', async (topic, message) => {
     console.log('\n📥 RAW message:', raw);
     const data = JSON.parse(raw);
     console.log('✅ Parsed — bike_id:', data.bike_id, 'lat:', data.lat, 'lon:', data.lon);
+
+    if (!data.has_fix || data.lat === 0 || data.lon === 0) {
+    console.log('⚠️ No GPS fix — skipping save');
+    return;
+    }
     await saveToSupabase(data.bike_id, data.lat, data.lon, data.spd);
+    
     await updateBike(data.bike_id, data.lat, data.lon);
   } catch (e) {
     console.error('❌ Parse error:', e.message);
